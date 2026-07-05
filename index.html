@@ -1,13 +1,164 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-Hant">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#111827" />
-    <title>Countdown Dashboard</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Countdown Dashboard</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: Arial, "Microsoft JhengHei", sans-serif; background: #f3f4f6; color: #111827; }
+.app { max-width: 1200px; margin: auto; padding: 32px 20px; }
+.today-card { background: linear-gradient(135deg, #2563eb, #7c3aed); color: white; border-radius: 24px; padding: 32px; text-align: center; box-shadow: 0 12px 30px rgba(0,0,0,0.15); }
+.today-card h2 { margin: 0; opacity: .9; }
+.today-date { margin-top: 10px; font-size: 36px; font-weight: bold; }
+.panel { margin-top: 24px; background: white; border-radius: 20px; padding: 22px; box-shadow: 0 8px 22px rgba(0,0,0,0.08); }
+.form-grid, .filter-grid { display: grid; gap: 12px; }
+.form-grid { grid-template-columns: 1.3fr 1fr 0.8fr 0.8fr 0.7fr auto; }
+.filter-grid { grid-template-columns: 1fr 0.8fr 0.8fr; margin-top: 16px; }
+input, select, button { height: 44px; border-radius: 12px; border: 1px solid #d1d5db; padding: 0 12px; font-size: 15px; }
+button { border: none; background: #2563eb; color: white; cursor: pointer; font-weight: bold; }
+button:hover { background: #1d4ed8; }
+.dashboard { margin-top: 28px; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 20px; }
+.event-card { color: white; border-radius: 22px; padding: 22px; min-height: 220px; box-shadow: 0 10px 26px rgba(0,0,0,0.15); display: flex; flex-direction: column; justify-content: space-between; cursor: grab; }
+.event-card.dragging { opacity: 0.5; }
+.event-icon { font-size: 36px; }
+.event-name { font-size: 20px; font-weight: bold; margin-top: 10px; }
+.event-date, .event-category { font-size: 14px; opacity: 0.9; }
+.days { font-size: 36px; font-weight: bold; }
+.days-label { font-size: 14px; opacity: 0.9; }
+.card-actions { display: flex; gap: 8px; margin-top: 12px; }
+.card-actions button, .card-actions a { flex: 1; height: 34px; border-radius: 10px; border: none; text-decoration: none; color: white; background: rgba(255,255,255,0.22); display: flex; align-items: center; justify-content: center; font-size: 13px; }
+.card-actions button:hover, .card-actions a:hover { background: rgba(255,255,255,0.35); }
+.empty { text-align: center; color: #6b7280; margin-top: 40px; }
+@media (max-width: 850px) { .form-grid, .filter-grid { grid-template-columns: 1fr; } .today-date { font-size: 28px; } .dashboard { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <section class="today-card">
+    <h2>Today</h2>
+    <div class="today-date" id="today"></div>
+  </section>
+
+  <section class="panel">
+    <h3>新增事件</h3>
+    <div class="form-grid">
+      <input id="eventName" placeholder="事件名稱，例如 Graduation" />
+      <input id="eventDate" type="date" />
+      <input id="eventIcon" placeholder="Icon，例如 🎓" />
+      <input id="eventCategory" placeholder="分類，例如 School" />
+      <input id="eventColor" type="color" value="#2563eb" />
+      <button onclick="addEvent()">新增</button>
+    </div>
+    <div class="filter-grid">
+      <input id="searchInput" placeholder="搜尋事件..." oninput="renderEvents()" />
+      <select id="categoryFilter" onchange="renderEvents()"><option value="all">所有分類</option></select>
+      <select id="statusFilter" onchange="renderEvents()">
+        <option value="all">全部狀態</option>
+        <option value="future">未來事件</option>
+        <option value="today">今天</option>
+        <option value="past">已過期</option>
+      </select>
+    </div>
+  </section>
+
+  <section class="dashboard" id="eventList"></section>
+  <div class="empty" id="emptyMessage" style="display:none;">沒有符合條件的事件</div>
+</div>
+
+<script>
+let events = JSON.parse(localStorage.getItem("dashboardEvents")) || [
+  { id: self.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()+1), name: "Graduation", date: "2026-11-30", icon: "🎓", category: "School", color: "#2563eb", order: 1 },
+  { id: self.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()+2), name: "OPT EAD", date: "2026-11-01", icon: "🪪", category: "Immigration", color: "#16a34a", order: 2 },
+  { id: self.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()+3), name: "I-140", date: "2026-08-15", icon: "🇺🇸", category: "Immigration", color: "#dc2626", order: 3 }
+];
+let draggedId = null;
+function saveEvents() { localStorage.setItem("dashboardEvents", JSON.stringify(events)); }
+function updateToday() {
+  const today = new Date();
+  document.getElementById("today").textContent = today.toLocaleDateString("zh-TW", { year: "numeric", month: "2-digit", day: "2-digit", weekday: "short" });
+}
+function getCountdown(dateString) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const target = new Date(dateString + "T00:00:00"); target.setHours(0,0,0,0);
+  return Math.ceil((target - today) / 86400000);
+}
+function addEvent() {
+  const name = document.getElementById("eventName").value.trim();
+  const date = document.getElementById("eventDate").value;
+  const icon = document.getElementById("eventIcon").value.trim() || "📅";
+  const category = document.getElementById("eventCategory").value.trim() || "General";
+  const color = document.getElementById("eventColor").value;
+  if (!name || !date) { alert("請輸入事件名稱與日期"); return; }
+  events.push({ id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()), name, date, icon, category, color, order: events.length + 1 });
+  saveEvents(); clearForm(); updateCategoryFilter(); renderEvents();
+}
+function clearForm() { eventName.value = ""; eventDate.value = ""; eventIcon.value = ""; eventCategory.value = ""; }
+function deleteEvent(id) { events = events.filter(e => e.id !== id); normalizeOrder(); saveEvents(); updateCategoryFilter(); renderEvents(); }
+function normalizeOrder() { events.forEach((e, i) => e.order = i + 1); }
+function updateCategoryFilter() {
+  const select = document.getElementById("categoryFilter");
+  const current = select.value;
+  const categories = [...new Set(events.map(e => e.category || "General"))];
+  select.innerHTML = '<option value="all">所有分類</option>';
+  categories.forEach(c => select.innerHTML += `<option value="${c}">${c}</option>`);
+  select.value = categories.includes(current) ? current : "all";
+}
+function getGoogleCalendarLink(event) {
+  const start = event.date.replaceAll("-", "");
+  const endDate = new Date(event.date + "T00:00:00"); endDate.setDate(endDate.getDate() + 1);
+  const end = endDate.toISOString().slice(0, 10).replaceAll("-", "");
+  const title = encodeURIComponent(`${event.icon} ${event.name}`);
+  const details = encodeURIComponent(`Category: ${event.category}`);
+  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${start}/${end}&details=${details}`;
+}
+function getFilteredEvents() {
+  const search = searchInput.value.toLowerCase();
+  const category = categoryFilter.value;
+  const status = statusFilter.value;
+  return [...events].sort((a,b) => a.order - b.order).filter(event => {
+    const days = getCountdown(event.date);
+    const matchSearch = event.name.toLowerCase().includes(search) || event.category.toLowerCase().includes(search);
+    const matchCategory = category === "all" || event.category === category;
+    let matchStatus = true;
+    if (status === "future") matchStatus = days > 0;
+    if (status === "today") matchStatus = days === 0;
+    if (status === "past") matchStatus = days < 0;
+    return matchSearch && matchCategory && matchStatus;
+  });
+}
+function renderEvents() {
+  const list = document.getElementById("eventList");
+  const empty = document.getElementById("emptyMessage");
+  const filteredEvents = getFilteredEvents();
+  list.innerHTML = "";
+  empty.style.display = filteredEvents.length ? "none" : "block";
+  filteredEvents.forEach(event => {
+    const days = getCountdown(event.date);
+    let numberText = days, label = "Days Left";
+    if (days === 0) { numberText = "Today"; label = "Event Day"; }
+    else if (days < 0) { numberText = "+" + Math.abs(days); label = "Days Passed"; }
+    list.innerHTML += `
+      <div class="event-card" draggable="true" data-id="${event.id}" style="background:${event.color}" ondragstart="handleDragStart(event)" ondragover="handleDragOver(event)" ondrop="handleDrop(event)" ondragend="handleDragEnd(event)">
+        <div><div class="event-icon">${event.icon}</div><div class="event-name">${event.name}</div><div class="event-date">${event.date}</div><div class="event-category"># ${event.category}</div></div>
+        <div><div class="days">${numberText}</div><div class="days-label">${label}</div><div class="card-actions"><a href="${getGoogleCalendarLink(event)}" target="_blank">Google</a><button onclick="deleteEvent('${event.id}')">刪除</button></div></div>
+      </div>`;
+  });
+}
+function handleDragStart(event) { draggedId = event.currentTarget.dataset.id; event.currentTarget.classList.add("dragging"); }
+function handleDragOver(event) { event.preventDefault(); }
+function handleDrop(event) {
+  event.preventDefault();
+  const targetId = event.currentTarget.dataset.id;
+  if (!draggedId || draggedId === targetId) return;
+  const draggedIndex = events.findIndex(e => e.id === draggedId);
+  const targetIndex = events.findIndex(e => e.id === targetId);
+  const [draggedItem] = events.splice(draggedIndex, 1);
+  events.splice(targetIndex, 0, draggedItem);
+  normalizeOrder(); saveEvents(); renderEvents();
+}
+function handleDragEnd(event) { event.currentTarget.classList.remove("dragging"); draggedId = null; }
+updateToday(); updateCategoryFilter(); renderEvents(); saveEvents();
+</script>
+</body>
 </html>
